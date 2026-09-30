@@ -40,12 +40,14 @@ Documents (site cagecfi.com + FAQ + plaquettes)
         ▼
  Supabase (pgvector)  ◀── recherche hybride (RRF) ──┐
                                                     │
-Visiteur ──▶ Widget web / CLI / Streamlit ──▶ rag_chat + Pydantic AI
-   (Vercel serverless FastAPI)                 (RodiumAI · gpt-5-mini)
+Visiteur ──▶ Widget web / CLI / Streamlit ──▶ rag_chat  (Vercel serverless FastAPI)
                                                     │
-       ┌────────────────────────────────────────────┘
-       ├─▶ question CAGECFI  → réponse ANCRÉE sur la base
-       └─▶ question générale → connaissances du modèle (sans inventer de fait CAGECFI)
+   1. Mémoire : reformule la relance (« Oui », pronoms) via l'historique — gpt-4o-mini
+   2. Recherche hybride (RRF) dans Supabase
+   3. Rédaction (RodiumAI · gpt-5-mini) :
+        ├─▶ question CAGECFI  → réponse ANCRÉE sur la base
+        ├─▶ question générale → connaissances du modèle (sans inventer de fait CAGECFI)
+        └─▶ message social / identité → réponse conversationnelle naturelle
 ```
 
 ---
@@ -156,6 +158,8 @@ LLM_PROVIDER=openai
 LLM_API_KEY=rd_sk_...            # ta clé RodiumAI
 LLM_MODEL=openai/gpt-5-mini
 LLM_BASE_URL=https://api.rodiumai.io/v1
+LLM_MAX_TOKENS=4000             # budget raisonnement + réponse (gpt-5-mini "raisonne" avant d'écrire)
+# CONDENSE_MODEL=openai/gpt-4o-mini  # (optionnel) modèle rapide pour la reformulation des relances
 
 EMBEDDING_PROVIDER=openai
 EMBEDDING_API_KEY=rd_sk_...      # même clé
@@ -247,17 +251,17 @@ Une page vitrine CAGECFI (sombre, animée) avec une **bulle de chat connectée �
 
 ### Lancer le chatbot complet (page + chat fonctionnel)
 
-Prérequis : Ollama lancé (`ollama serve`), `.env` configuré et ingestion faite (étapes 3–8).
+Prérequis : `.env` configuré (RodiumAI par défaut ; Ollama seulement pour la voie locale) et ingestion faite (étapes 4–8).
 
 ```powershell
 $env:PYTHONUTF8='1'; uv run uvicorn src.api:app --port 8000
 ```
 Puis ouvrez **http://localhost:8000**. La page se charge et le **widget de chat dialogue réellement avec l'agent** (recherche dans la base CAGECFI + réponse en français).
 
-- `GET /` → la landing page · `POST /chat` → réponse **en streaming** · `GET /health` → état du service.
-- Le chat utilise une **recherche forcée** ([`src/rag_chat.py`](src/rag_chat.py)) : il interroge toujours la base puis rédige en une seule passe LLM, et **diffuse la réponse mot à mot** (ressenti immédiat).
-- Les salutations (« Bonjour », « Merci ») répondent instantanément. Pour une vraie question, le 1er mot apparaît après quelques secondes (recherche + modèle sur CPU), puis le texte défile.
-- Le widget appelle `/chat` en même origine — aucune configuration CORS nécessaire en local.
+- `GET /` → la landing page · `POST /chat {message, history}` → réponse **complète (un bloc)** · `GET /health` → état.
+- Le chat utilise une **recherche forcée avec mémoire** ([`src/rag_chat.py`](src/rag_chat.py)) : il **reformule la relance** (« Oui », pronoms) à partir de l'historique via `gpt-4o-mini`, interroge la base, puis **rédige en une passe** (RodiumAI · `gpt-5-mini`).
+- Les salutations (« Bonjour », « Merci ») répondent instantanément. Pour une vraie question, la réponse arrive après quelques secondes (raisonnement gpt-5-mini).
+- Le widget envoie l'historique et appelle `/chat` en même origine — aucune config CORS nécessaire en local.
 
 > Aperçu visuel **sans** chat : `uv run python -m http.server 8080 --directory frontend` (le chat affichera alors le message de repli, car l'API n'est pas servie sur ce port).
 
@@ -283,16 +287,18 @@ Reprendre **toutes** les clés du `.env` (elles ne sont jamais commitées) :
 `POSTGRES_TABLE_*`, et le bloc **RodiumAI** (`LLM_*`, `EMBEDDING_*`).
 
 ### Déployer
-- **Via Git** : connecter le dépôt à **un seul** projet Vercel dont la *Production
-  Branch* est `feat/ingestion-plaquettes-cagecfi` → chaque push redéploie.
-- **Via CLI** (déploiement manuel de l'état local) :
-  ```powershell
-  npx vercel link          # lier au bon projet
-  npx vercel deploy --prod # build + mise en production
-  ```
+> ⚠️ **Réalité actuelle** : un `git push` sur `feat/ingestion-plaquettes-cagecfi` crée
+> un déploiement **Preview**, PAS Production (la *Production Branch* du projet n'est
+> pas cette branche). Pour mettre à jour la **production**, une de ces voies :
 
-> ⚠️ Attention aux **projets Vercel multiples** : ne garder qu'un projet relié au
-> dépôt pour éviter que l'URL de prod pointe vers un projet non synchronisé.
+- **Régler l'auto-déploiement** *(recommandé)* : Settings → Git → *Production Branch*
+  = `feat/ingestion-plaquettes-cagecfi`. Ensuite, chaque `git push` déploie en prod.
+- **CLI** : `npx vercel link` puis `npx vercel deploy --prod` (déploie l'état local).
+- **Dashboard / API** : « Redeploy » un déploiement Preview en ciblant **Production**
+  (utile aussi pour appliquer un simple changement de variable d'environnement).
+
+> ⚠️ **Projets Vercel multiples** : l'URL de prod est servie par `jordanbissadu-novafin-chatbot1`.
+> Ne garder qu'un seul projet relié au dépôt évite que la prod pointe vers un projet non synchronisé.
 
 ### Embarquer le widget sur un autre domaine (cagecfi.com)
 Si la page est hébergée ailleurs que l'API, modifier `CHAT_API_URL` dans
@@ -346,6 +352,8 @@ uv run python -m http.server 8080 --directory frontend
 | Dimensions d'embedding incompatibles | La table est en `vector(1536)` (= `text-embedding-3-small`). Changer de modèle d'embedding de dimension différente impose `DROP TABLE cagecfi_chunks CASCADE`, recréer le schéma, puis **ré-ingérer**. |
 | `model_not_allowed` (403 RodiumAI) | La clé n'est pas autorisée pour ce modèle. Dans le dashboard RodiumAI, autoriser `openai/gpt-5-mini` **et** `openai/text-embedding-3-small` pour la clé. |
 | `billing_not_active` / `account is not active` (429) | Le compte du fournisseur (OpenAI/RodiumAI) n'a pas de facturation active ou de crédits. Recharger le wallet / activer la facturation. |
+| `token limit … exceeded before any response` | Modèle de raisonnement (gpt-5-mini) : le budget est épuisé par le raisonnement avant la réponse (surtout sur questions complexes). Augmenter **`LLM_MAX_TOKENS`** (4000 recommandé). |
+| Le bot « oublie » la conversation (« Oui » ignoré) | S'assurer que le widget envoie bien `history` et que l'API la transmet (`rag_chat.answer(message, history)`). Corrigé depuis la mémoire conversationnelle. |
 | La prod ne reflète pas mes changements | Vérifier que le déploiement vise **le bon projet Vercel** (plusieurs projets peuvent coexister) et que le build a réussi (bundle < 500 Mo). |
 | `bundle size exceeds 500 MB` (build Vercel) | Une dep lourde a fui dans le runtime. Vérifier que `requirements.txt` reste slim et que `.vercelignore` exclut bien `uv.lock`. |
 | Le widget de chat répond « pas encore connecté » | Vous avez ouvert la page sans l'API. Lancez `uv run uvicorn src.api:app --port 8000` et ouvrez http://localhost:8000 (pas le port 8080 ni `file://`). |
@@ -365,8 +373,8 @@ MongoDB-RAG-Agent/
 │   ├── prompts.py                  # Prompts système
 │   ├── cli_supabase.py             # Interface terminal
 │   ├── streamlit_app_supabase.py   # Interface web (Streamlit)
-│   ├── api.py                      # API FastAPI (sert la landing + endpoint /chat en streaming)
-│   ├── rag_chat.py                 # Chat RAG : recherche forcée + rédaction streamée
+│   ├── api.py                      # API FastAPI (sert la landing + endpoint /chat avec historique)
+│   ├── rag_chat.py                 # Chat RAG : mémoire conversationnelle + recherche forcée + rédaction
 │   └── ingestion/
 │       ├── chunker.py              # Découpage Docling HybridChunker
 │       ├── crawl_cagecfi.py        # Crawler du site cagecfi.com → Markdown
@@ -408,11 +416,15 @@ MongoDB-RAG-Agent/
 - [x] **Base de connaissances** : crawl de cagecfi.com + FAQ rédigée
 - [x] **Front-end** : landing page CAGECFI + widget de chat (`frontend/index.html`)
 - [x] **API FastAPI** (`/chat`) connectant le widget à l'agent (`src/api.py`)
-- [x] **Recherche forcée + streaming** (réponses fiables, affichées mot à mot — `src/rag_chat.py`)
+- [x] **Recherche forcée** (réponses fiables ancrées sur la base — `src/rag_chat.py`)
 - [x] **Retrait du legacy MongoDB** (`examples/`, `test_scripts/`, doublons de dépendances)
 - [x] **Bascule fournisseur cloud** : RodiumAI (`openai/gpt-5-mini` + `openai/text-embedding-3-small`, 1536)
 - [x] **Déploiement production sur Vercel** (serverless, bundle slim)
 - [x] **Réponses générales** hors périmètre CAGECFI (garde-fou anti-hallucination conservé)
+- [x] **Messages sociaux / identité** gérés naturellement (plus de refus sur le small-talk)
+- [x] **Budget `max_tokens=4000`** (gpt-5-mini raisonne avant d'écrire) + **retries** sur erreurs transitoires
+- [x] **Mémoire conversationnelle** : reformulation des relances (« Oui », pronoms) + historique
+- [ ] Nettoyage du contenu « pays » de la base (incohérences entre documents)
 - [ ] Canonicalisation des noms de fichiers `*_supabase.py` → `*.py`
 - [ ] Consolidation des projets Vercel + auto-déploiement Git
 

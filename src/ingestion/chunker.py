@@ -14,7 +14,6 @@ Benefits over custom chunking:
 - Battle-tested (maintained by Docling team)
 """
 
-import os
 import logging
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass

@@ -3,7 +3,6 @@
 
 import asyncio
 import streamlit as st
-from typing import List
 
 from pydantic_ai import Agent
 from pydantic_ai.messages import PartDeltaEvent, PartStartEvent, TextPartDelta

@@ -53,7 +53,7 @@ src/
 ├── prompts.py                 # System prompts (règles métier, en français)
 ├── tools_supabase.py          # Recherches semantic / text / hybrid + RRF
 ├── agent_supabase.py          # Agent Pydantic AI et ses outils (CLI, Streamlit)
-├── rag_chat.py                # Mode « recherche forcée » (utilisé par l'API)
+├── rag_chat.py                # « recherche forcée » + mémoire conversationnelle (utilisé par l'API)
 ├── api.py                     # FastAPI : /, /chat, /health
 ├── cli_supabase.py            # Interface terminal (Rich)
 ├── streamlit_app_supabase.py  # Interface web locale
@@ -170,6 +170,8 @@ LLM_API_KEY=sk-...
 LLM_MODEL=gpt-5-mini
 LLM_BASE_URL=https://api.openai.com/v1
 LLM_TEMPERATURE=0.1          # bas = déterministe = moins d'hallucinations
+LLM_MAX_TOKENS=4000          # budget raisonnement + réponse (les modèles gpt-5 raisonnent avant d'écrire)
+# CONDENSE_MODEL=openai/gpt-4o-mini  # modèle rapide pour reformuler les relances (mémoire)
 
 # Embedding Provider
 EMBEDDING_PROVIDER=openai

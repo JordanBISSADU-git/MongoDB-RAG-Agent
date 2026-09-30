@@ -205,7 +205,7 @@ async def _stream_agent(
                                 console.print(f"    [dim]Args: {args_str}[/dim]")
 
                         elif event_type == "FunctionToolResultEvent":
-                            console.print(f"  [green]Search completed successfully[/green]")
+                            console.print("  [green]Search completed successfully[/green]")
 
             # Handle end node
             elif Agent.is_end_node(node):
