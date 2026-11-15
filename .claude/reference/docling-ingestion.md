@@ -491,7 +491,7 @@ all_docs = [process_document(f) for f in files]
 for file_path in files:
     doc_data = await process_document(file_path)
     if doc_data:
-        await save_to_mongodb(doc_data)
+        await save_to_postgres(doc_data)
         # doc_data goes out of scope, memory freed
 ```
 

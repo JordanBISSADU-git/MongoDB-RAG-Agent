@@ -32,6 +32,9 @@ wheels/
 .coverage
 htmlcov/
 
+# Linting
+.ruff_cache/
+
 # IDEs
 .vscode/
 .idea/
@@ -49,3 +52,5 @@ uv.lock
 # Documents ingeres (telecharges, jamais commites)
 documents/plaquettes/
 PR_BODY.md
+.vercel
+.env*

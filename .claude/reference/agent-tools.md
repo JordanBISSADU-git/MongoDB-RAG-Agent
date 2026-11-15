@@ -157,17 +157,16 @@ async def search_knowledge_base(
 
     # Access dependencies from context
     state_deps = ctx.deps
-    mongo_client = state_deps.mongo_client
-    db = state_deps.db
+    pg_pool = state_deps.pg_pool
 
     # Generate query embedding
     embedding = await state_deps.get_embedding(query)
 
-    # Build and execute search pipeline
+    # Run the appropriate search
     if search_type == "hybrid":
-        pipeline = build_hybrid_search_pipeline(query, embedding, match_count)
+        results = await hybrid_search(ctx, query, match_count)
     else:
-        pipeline = build_semantic_search_pipeline(embedding, match_count)
+        results = await semantic_search(ctx, query, match_count)
 
     results = await db.chunks.aggregate(pipeline).to_list(length=match_count)
 
@@ -368,15 +367,14 @@ def truncate_history(
 
 ```python
 from typing import Optional
-from motor.motor_asyncio import AsyncIOMotorClient
+import asyncpg
 import openai
 
 class AgentDependencies:
     """Dependencies injected into the agent context."""
 
     def __init__(self):
-        self.mongo_client: Optional[AsyncIOMotorClient] = None
-        self.db = None
+        self.pg_pool: Optional[asyncpg.Pool] = None
         self.openai_client: Optional[openai.AsyncOpenAI] = None
         self.settings = None
 
@@ -385,27 +383,32 @@ class AgentDependencies:
         if not self.settings:
             self.settings = load_settings()
 
-        # MongoDB
-        if not self.mongo_client:
-            self.mongo_client = AsyncIOMotorClient(self.settings.mongodb_uri)
-            self.db = self.mongo_client[self.settings.mongodb_database]
+        # PostgreSQL (Supabase) — statement_cache_size=0 est requis par le
+        # pooler pgbouncer, qui ne supporte pas les prepared statements.
+        if not self.pg_pool:
+            self.pg_pool = await asyncpg.create_pool(
+                self.settings.database_url,
+                min_size=1, max_size=10,
+                command_timeout=60,
+                statement_cache_size=0,
+            )
 
             # Verify connection
-            await self.mongo_client.admin.command('ping')
+            async with self.pg_pool.acquire() as conn:
+                await conn.fetchval("SELECT 1")
 
         # OpenAI client
         if not self.openai_client:
             self.openai_client = openai.AsyncOpenAI(
-                api_key=self.settings.llm_api_key,
-                base_url=self.settings.llm_base_url
+                api_key=self.settings.embedding_api_key,
+                base_url=self.settings.embedding_base_url
             )
 
     async def cleanup(self):
         """Clean up connections."""
-        if self.mongo_client:
-            self.mongo_client.close()
-            self.mongo_client = None
-            self.db = None
+        if self.pg_pool:
+            await self.pg_pool.close()
+            self.pg_pool = None
 
     async def get_embedding(self, text: str) -> list[float]:
         """Generate embedding for text."""
@@ -502,18 +505,16 @@ async def search_knowledge_base(
             else:
                 results = await semantic_search(...)
 
-        except OperationFailure as e:
-            if e.code == 291:
-                return (
-                    "Vector search index is not configured. "
-                    "Please set up indexes in MongoDB Atlas before searching."
-                )
-            raise
-
-        except ConnectionFailure:
+        except asyncpg.UndefinedTableError:
             return (
-                "Could not connect to MongoDB. "
-                "Please check your connection and try again."
+                "Les tables cagecfi_* sont absentes. "
+                "Exécuter supabase_setup_cagecfi.sql avant de chercher."
+            )
+
+        except asyncpg.PostgresError:
+            return (
+                "Connexion à la base impossible. "
+                "Vérifier DATABASE_URL et réessayer."
             )
 
         # Format results
@@ -562,8 +563,8 @@ async def test_search_tool_success():
     ]
 
     # Patch dependencies
-    with patch('examples.tools.AgentDependencies', return_value=mock_deps):
-        with patch('examples.tools.semantic_search', return_value=mock_results):
+    with patch('src.tools_supabase.AgentDependencies', return_value=mock_deps):
+        with patch('src.tools_supabase.semantic_search', return_value=mock_results):
             result = await search_knowledge_base(
                 ctx=ctx,
                 query="test query",
@@ -582,7 +583,7 @@ async def test_search_tool_success():
 ```python
 @pytest.mark.integration
 async def test_agent_with_real_search():
-    """Test agent with real MongoDB search."""
+    """Test agent with real Supabase search."""
 
     # Setup
     state = RAGState()
